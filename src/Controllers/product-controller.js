@@ -29,6 +29,7 @@ exports.getBySlug = async(req, res, next) =>{
 exports.getById = async(req, res, next) =>{
   try {
     var data = await repository.getById(req.params.id)
+    
     res.status(200).send(data);
   }catch(e){
     res.status(500).send({
