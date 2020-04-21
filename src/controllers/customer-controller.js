@@ -126,6 +126,7 @@ exports.update = async (req, res) => {
         error: e})
     }
 };
+//#region Delete
 //DELETE
 exports.del = async(req, res) => {
     try {        
@@ -142,3 +143,5 @@ exports.del = async(req, res) => {
         })
     }
 };
+//#endregion
+
