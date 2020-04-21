@@ -1,113 +1,144 @@
-'use strict'
-
-const ValidationContract = require('../validators/fluent-validator');
+const User = require("../models/customers");
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const authConfig = require('../configure/auth')
 const repository = require('../repositories/customer-repository');
-const md5 = require('md5');
-const emailService = require('../services/email-service')
-const authService = require('../services/auth-service');
+var fs = require("fs");
 
-exports.post = async (req, res, next) =>{
-
-    let contract = new ValidationContract();
-    contract.hasMinLen(req.body.name, 3, 'O nome deve conter pelo menos 3 caracteres');
-    contract.isEmail(req.body.email, 'E-mail inválido');
-    contract.hasMinLen(req.body.password, 6, 'A senha deve conter pelo menos 1 caracteres');
+function generateToken(params = {}){
+    return jwt.sign(params, authConfig.secret, {
+        expiresIn: 86400
+    })
+}
+function gerarJson(params = {}){
     
-    //Se os dados forem inválidos
-    if(!contract.isValid()){
-        res.status(400).send(contract.errors()).end();
-        return;
-    }
+    fs.readFile('input.json', 'utf8', function(err, data) {
+        if (err) {
+                var dados = [];                
+                dados.push({email: params.email , password: params.password})    
+                fs.writeFile("input.json", JSON.stringify(dados), function (e) {
+                console.log('complete');
+                })
+            return
+         }
+            let leaderboard;
+            try {
+                leaderboard = JSON.parse(data);
+            } catch(err) {
+                console.log("Error parsing input JSON", err);
+                return;
+            }
+            leaderboard.push({email: params.email , password: params.password});
+
+            // now write the data back to the file
+            fs.writeFile('input.json', JSON.stringify(leaderboard), 'utf8', function() {
+                if (err) {
+                    console.log(err);
+                    return;
+                }                
+            });
+        });    
+}
+//Post
+exports.post = async (req, res, next) => {
     
     try {
-        await repository.create({
-            name: req.body.name,
-            email: req.body.email,
-            password: md5(req.body.password + global.SALT_KEY),
-            roles: ["user"]
-        });
-        emailService.send(req.body.email, 'Welcome to ProFinder', global.EMAIL_TMPL.replace('{0}', req.body.name));
-        res.status(201).send({ message: 'Cliente cadstrado com sucesso'});    
+        const { email } = req.body;
+        if (await User.findOne({ email }))
+            return res.status(400).send({ message: 'E-mail já cadastrado '})
+        else
+            var user = await repository.create(req.body)            
+            res.status(201).send({ message: 'Usuário criado com sucesso' });
+            gerarJson(user);
     } catch (e) {
-        res.status(500).send({ message: 'Erro ao cadastra cliente', error: e});
-        console.log(e)
+        res.status(400).send({ message: 'Erro ao cadastra usuário'});           
     }
 };
-
-exports.get = async(req, res, next) =>{
-   try{
-    var data = await repository.get();
-    res.status(200).send(data);    
-    }catch(e){
+//Login
+exports.login = async (req, res, next) => {
+    try {
+        const{ email, password } = req.body;        
+        const user = await User.findOne({ email }).select('+password');
+        
+        if(!user)
+            return res.status(400).send({ error: 'Email inválido' });           
+        if(!await bcrypt.compare(password, user.password))
+            return res.status(400).send({ error: 'Senha inválida' });
+        
+        else            
+            res.status(201).send({ message: 'Login efetuado com sucesso' });
+            gerarJson(user);
+    } catch (e) {
+        res.status(400).send({ message: 'Erro'});
+    }
+}
+//Authenticate
+exports.Authenticate = async(req, res) => {
+    const{ email, password} = req.body;
+    
+    const user = await User.findOne({ email }).select('+password');
+    if(!user)
+        return res.status(400).send({ error: 'Usuário não encontrado' });
+    
+    if(!await bcrypt.compare(password, user.password))
+        return res.status(400).send({ error: 'Senha inválida' });
+    
+    user.password = undefined;
+    res.send({ 
+        user,
+        token: generateToken({ id: user.id })
+    });
+};
+//Get All
+exports.get = async (req, res) => {
+    try {
+        var data = await repository.get();
+        res.status(200).send({
+            data: data,
+            count: data.length
+        });        
+    } catch (e) {
         res.status(500).send({
-            message: 'Falha ao processar sua requisição', error: e
-        })        
-    }
-};
-
-exports.authenticate = async (req, res, next) =>{
-    try {
-        const customer = await repository.authenticate({
-            email: req.body.email,
-            password: md5(req.body.password + global.SALT_KEY)
+            message: 'Falha ao processar sua requisição', 
+            error: e
         });
-        if(!customer){
-            res.status(404).send({
-                message: 'Usuário ou senha inválido'
-            });
-            return;
-        }
-        emailService.send(req.body.email, 'Welcome to ProFinder', global.EMAIL_TMPL.replace('{0}', req.body.name));
-        
-        const token = await authService.generateToken({
-            id: customer.id,
-            email: customer.email,
-            name: customer.name,
-            roles: customer.roles
-        })
-        
-        res.status(201).send({
-            token: token,
-            data:{
-                email: customer.email,
-                name: customer.name
-            }
-        });    
+    };
+};
+//FindById
+exports.getById = async (req, res) => {
+   try {
+       var data = await repository.getById(req.params.id);
+       res.status(200).send(data);
+   } catch (e) {
+       res.status(500).send({
+           message: 'Falha ao processar sua requisição',
+           error: e
+       })
+   }
+};
+//PUT
+exports.update = async (req, res) => {
+    try {
+        var data = await repository.update(req.params.id, req.body)
+        res.status(201).send({ message: 'Usuário foi atualizado'})
     } catch (e) {
-        res.status(500).send({ message: 'Erro ao cadastra cliente', error: e});
-        console.log(e)
+        re.status(400).send({ message: 'Erro ao atualizar usuário',
+        error: e})
     }
 };
-
-exports.refreshToken = async (req, res, next) =>{
-    try {
-        const token = req.body.token || req.query.token || req.headers['x-access-token']
-        const data = await authService.decodeToken(token);
-
-        const customer = await repository.getById(data.id);
-
-        if(!customer){
-            res.status(404).send({
-                message: 'Cliente não encontrado'
-            });
-            return;
-        }
-        const tokenData = await authService.generateToken({
-            id: customer.id,
-            email: customer.email,
-            name: customer.name,
-            roles: customer.roles
-        })
-                
-        res.status(201).send({
-            token: token,
-            data:{
-                email: customer.email,
-                name: customer.name
+//DELETE
+exports.del = async(req, res) => {
+    try {        
+        if(! await User.findOne({_id: req.params.id}))
+            {
+                res.status(400).send({ message: 'Usário não encontrado'})
+                return false
             }
-        });    
+        var data = await repository.del(req.params.id)
+        res.status(200).send({ message: 'Usuário deletado com sucesso' })
     } catch (e) {
-        res.status(500).send({ message: 'Erro ao cadastra cliente', error: e});
-        console.log(e)
+        res.status(400).send({ message: 'Erro ao remover usuário',
+        error: e
+        })
     }
 };

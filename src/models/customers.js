@@ -1,6 +1,7 @@
 'use strict'
 
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 const Schema = mongoose.Schema;
 
 const schema = new Schema({
@@ -26,7 +27,12 @@ const schema = new Schema({
         enum:['user', 'admin'],
         default:'user'
     }]
+});
 
+schema.pre('save', async function(next){
+    const hash = await bcrypt.hash(this.password, 10);
+    this.password = hash;
+    next();
 });
 
 module.exports = mongoose.model('customers',schema);
